@@ -1,0 +1,12 @@
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user
+.DS_Store
+*.html
+*.knit.md
+# Données brutes conservées localement, exclues du suivi Git.
+data/raw/*.xlsx
+# Sorties générées reproductibles.
+outputs/*
+!outputs/.gitkeep

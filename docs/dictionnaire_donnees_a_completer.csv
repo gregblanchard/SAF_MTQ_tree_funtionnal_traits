@@ -1,0 +1,5 @@
+nom_variable,description,table,unite,type,unite_observation,frequence,role,notes
+bloc,,,,,bloc,,,signification de A/B/C à confirmer
+arbre_id,,,,,arbre,,,identifiant unique à confirmer
+espece,,,,,arbre,,,nom scientifique à harmoniser
+date,,,,,mesure,,,format à confirmer

@@ -1,0 +1,157 @@
+---
+title: "Traits fonctionnels et fonctions écosystémiques des espèces agroforestières"
+author: "Grégoire Blanchard"
+date: "`r Sys.Date()`"
+lang: fr
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 5.5, dpi = 300)
+required <- c("here", "readxl", "dplyr", "tidyr", "stringr", "ggplot2", "knitr", "purrr")
+missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing)) stop("Installer ces packages avant de rendre le document : ", paste(missing, collapse = ", "))
+
+library(dplyr)
+library(stringr)
+library(ggplot2)
+raw_dir <- here::here("data", "raw")
+```
+
+# Résumé
+
+**À compléter après stabilisation des analyses.** L'article étudiera la distribution des traits foliaires, ligneux et de litière de 15 espèces agroforestières, puis leurs liens avec la croissance des arbres, le couvert végétal du sol, les flux de litière, les isotopes et les propriétés du sol.
+
+# Introduction
+
+## Contexte
+
+À rédiger : enjeux de la diversification ligneuse en agroforesterie tropicale, choix des espèces et compromis entre fonctions écosystémiques.
+
+## Cadre conceptuel
+
+À préciser : stratégies fonctionnelles foliaires, ligneuses et de litière, et fonctions ciblées.
+
+## Questions et hypothèses
+
+- **Question 1 :** comment les 15 espèces se répartissent-elles dans un espace fonctionnel fondé sur les traits foliaires, du bois et de la litière ?
+- **Question 2 :** quelles associations observe-t-on entre ces traits et les variables de croissance, de végétation du sol, d'isotopes et de sol ?
+- **Hypothèses :** à formuler à partir de la littérature et du protocole effectivement mesuré.
+
+# Matériel et méthodes
+
+## Site et plan d'échantillonnage
+
+Le plan transmis est **un bloc par espèce, avec 12 arbres dans chaque bloc**. Les codes A/B/C indiquent les lignes et 1–4 les colonnes de la grille d'arbres. Les arbres sont donc des sous-échantillons au sein du bloc-espèce. Comme chaque espèce n'est représentée que par un bloc, les effets de l'espèce et de l'emplacement du bloc ne peuvent pas être séparés pour les variables mesurées à l'échelle du bloc.
+
+Le fichier de croissance contient 23 espèces alors que les données de traits foliaires et de bois couvrent 15 espèces focales. Le statut des huit espèces supplémentaires reste à préciser.
+
+## Données et variables
+
+```{r inventory}
+files <- list.files(raw_dir, pattern = "\\.xlsx$", full.names = TRUE)
+workbook_inventory <- purrr::map_dfr(files, function(path) {
+  sheets <- readxl::excel_sheets(path)
+  purrr::map_dfr(sheets, function(sheet) {
+    dat <- readxl::read_excel(path, sheet = sheet)
+    tibble::tibble(file = basename(path), sheet = sheet,
+                   n_rows = nrow(dat), n_columns = ncol(dat),
+                   n_missing_cells = sum(is.na(dat)))
+  })
+})
+knitr::kable(workbook_inventory, caption = "Inventaire des classeurs et feuilles")
+```
+
+## Préparation des traits foliaires et du bois
+
+Les mesures de feuilles sont agrégées au niveau de l'arbre, puis au niveau de l'espèce. La première ordination utilise cinq variables communes : chlorophylle moyenne, épaisseur foliaire, LDMC, SLA et densité du bois. Elle est exploratoire ; les mesures de litière et les fonctions écosystémiques ne sont pas encore intégrées.
+
+```{r trait-preparation}
+norm_id <- function(x) str_to_lower(str_replace_all(str_trim(as.character(x)), "_", "-"))
+growth <- readxl::read_excel(file.path(raw_dir, "DATA_GROWTH.xlsx"), sheet = "DATA") |>
+  mutate(id = norm_id(code), prefix = str_extract(id, "^[^-]+"))
+code_species <- growth |> distinct(prefix, species = Espèce)
+
+leaf <- readxl::read_excel(file.path(raw_dir, "LEAF_TRAITS.xlsx"), sheet = "Leaf") |>
+  mutate(id = norm_id(Code), prefix = str_extract(id, "^[^-]+")) |>
+  left_join(code_species, by = "prefix")
+leaf_vars <- c("mean_chlorophyll", "leaf thickness (mm)", "LDMC (mg g-1)",
+               "specific leaf area (cm2 g-1)")
+leaf_tree <- leaf |>
+  filter(!is.na(species)) |>
+  group_by(id, species) |>
+  summarise(across(all_of(leaf_vars), ~ if (all(is.na(.x))) NA_real_ else mean(.x, na.rm = TRUE)),
+            .groups = "drop")
+leaf_species <- leaf_tree |>
+  group_by(species) |>
+  summarise(across(all_of(leaf_vars), ~ mean(.x, na.rm = TRUE)),
+            n_leaf_trees = n_distinct(id), .groups = "drop")
+
+wood <- readxl::read_excel(file.path(raw_dir, "WD_032026.xlsx"), sheet = "Feuille 1") |>
+  mutate(id = norm_id(ind), prefix = str_extract(id, "^[^-]+")) |>
+  left_join(code_species, by = "prefix") |>
+  filter(!is.na(species))
+wood_species <- wood |>
+  group_by(species) |>
+  summarise(wood_density_mean = mean(density, na.rm = TRUE),
+            n_wood_trees = n(), .groups = "drop")
+
+species_traits <- inner_join(leaf_species, wood_species, by = "species")
+knitr::kable(species_traits, digits = 2,
+             caption = "Moyennes provisoires des traits pour les espèces appariées")
+```
+
+## Espace fonctionnel préliminaire
+
+```{r pca}
+pca_vars <- c("wood_density_mean", "mean_chlorophyll", "leaf thickness (mm)",
+              "LDMC (mg g-1)", "specific leaf area (cm2 g-1)")
+pca_data <- species_traits |> select(species, all_of(pca_vars)) |> tidyr::drop_na()
+pca_fit <- prcomp(pca_data |> select(-species), center = TRUE, scale. = TRUE)
+variance_explained <- pca_fit$sdev^2 / sum(pca_fit$sdev^2)
+pca_scores <- as.data.frame(pca_fit$x) |>
+  mutate(species = pca_data$species)
+
+knitr::kable(data.frame(axis = paste0("PC", seq_along(variance_explained)),
+                        variance_explained = variance_explained,
+                        cumulative = cumsum(variance_explained)),
+             digits = 3, caption = "Variance expliquée par les axes")
+
+ggplot(pca_scores, aes(PC1, PC2, label = species)) +
+  geom_hline(yintercept = 0, colour = "grey85") +
+  geom_vline(xintercept = 0, colour = "grey85") +
+  geom_point(colour = "#176B63", size = 2.5) +
+  geom_text(check_overlap = TRUE, nudge_y = 0.12, size = 3) +
+  labs(x = sprintf("PC1 (%.1f%%)", 100 * variance_explained[1]),
+       y = sprintf("PC2 (%.1f%%)", 100 * variance_explained[2])) +
+  theme_minimal()
+```
+
+# Résultats
+
+## Distribution des traits
+
+À compléter après vérification des unités, de la taxonomie et des répétitions effectives.
+
+## Croissance et autres fonctions
+
+À compléter après harmonisation des mesures répétées de croissance et de leur méthode (diamètre ou circonférence, hauteur de mesure, unité). Le δ¹⁵N sera interprété comme indicateur isotopique ; une fraction d'azote dérivée de l'atmosphère ne sera calculée que si les références et paramètres requis sont disponibles.
+
+# Discussion
+
+À compléter : interprétation des axes fonctionnels, comparaison à la littérature, portée du dispositif et limites liées à l'absence de blocs répliqués par espèce.
+
+# Points à résoudre
+
+1. Confirmer si les huit espèces supplémentaires du fichier de croissance sont hors du périmètre de l'article.
+2. Attribuer un identifiant distinct aux quatre paires de lignes portant les codes dupliqués `Lh-B1` à `Lh-B4`.
+3. Valider les correspondances taxonomiques et les unités des traits.
+4. Clarifier les deux séries de litterfall, les unités de masse et l'identité des répétitions.
+5. Documenter les références δ¹⁵N nécessaires à l'interprétation de la fixation symbiotique.
+6. Vérifier profondeur de sol et masse volumique/coarse fragments avant toute estimation de stock de carbone.
